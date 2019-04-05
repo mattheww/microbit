@@ -8,10 +8,11 @@ extern crate panic_halt;
 use core::time::Duration;
 use cortex_m_rt::entry;
 use microbit::hal::prelude::*;
-use microbit::hal::timer::{Timer, Generic};
-use microbit::hal::hal::timer::CountDown;
-use microbit::nrf51::{TIMER0, TIMER1, TIMER2, RTC0, RTC1};
-use microbit::nb::block;
+use microbit::hal::hi_res_timer::TimerFrequency;
+use microbit::hal::lo_res_timer::{FREQ_8HZ, FREQ_32768HZ};
+use microbit::hal::timer::{CountDownTimer, CountDownRtc};
+//use microbit::nrf51::{TIMER0, TIMER1, TIMER2, RTC0, RTC1};
+use nb::block;
 
 /* 
 @startuml
@@ -89,65 +90,80 @@ fn main() -> ! {
 
         // Start the LFCLK
         p.CLOCK.tasks_lfclkstart.write(|w| unsafe { w.bits(1) });
+        while p.CLOCK.events_lfclkstarted.read().bits() == 0 {}
+        p.CLOCK.events_lfclkstarted.reset();
 
-        let mut gpio = p.GPIO.split();
-        
-        let mut pin = gpio.pin14.into_push_pull_output();
+        let gpio = p.GPIO.split();
+
+        let mut pin_mid = gpio.pin14.into_push_pull_output();
+        let mut pin_lower_left = gpio.pin15.into_push_pull_output();
+        let mut pin_upper_right = gpio.pin13.into_push_pull_output();
         let _ = gpio.pin6.into_push_pull_output();
 
         // 32bits @ 1MHz = ~72 minutes
-        let mut timer0 = Timer::<Generic, TIMER0>::new(p.TIMER0, 4).into_countdown();
+        let mut timer0 = CountDownTimer::new(p.TIMER0, TimerFrequency::Freq1MHz);
         // 16bits @ 31.25kHz = ~2 seconds
-        let mut timer1 = Timer::<Generic, TIMER1>::new(p.TIMER1, 9).into_countdown();
+        let mut timer1 = CountDownTimer::new(p.TIMER1, TimerFrequency::Freq31250Hz);
         // 16bits @ 31.25kHz = ~2 seconds
-        let mut timer2 = Timer::<Generic, TIMER2>::new(p.TIMER2, 9).into_countdown();
+        let mut timer2 = CountDownTimer::new(p.TIMER2, TimerFrequency::Freq31250Hz);
 
+        // 24bits @ 8Hz = ~24 days
+        let mut rtc0 = CountDownRtc::new(p.RTC0, FREQ_8HZ);
         // 24bits @ 32.768kHz = 512 seconds
-        let mut rtc0 = Timer::<Generic, RTC0>::new(p.RTC0, 0).into_countdown();
-        // 24bits @ 32.768kHz = 512 seconds
-        let mut rtc1 = Timer::<Generic, RTC1>::new(p.RTC1, 0).into_countdown();
+        let mut rtc1 = CountDownRtc::new(p.RTC1, FREQ_32768HZ);
 
-        CountDown::start(&mut rtc0, Duration::from_millis(5_000));
-        CountDown::start(&mut rtc1, Duration::from_millis(4_000));
+        rtc0.start(Duration::from_millis(5_000));
+        rtc0.start(Duration::from_millis(5_000));
+        rtc1.start(Duration::from_millis(4_000));
 
-        CountDown::start(&mut timer0, Duration::from_millis(1_500));
-        CountDown::start(&mut timer1, Duration::from_millis(1_000));
-        CountDown::start(&mut timer2, Duration::from_millis(500));
-
-        // @+500
-        block!(timer2.wait());
-        pin.set_high();
+        timer0.start(Duration::from_millis(1_500));
+        timer1.start(Duration::from_millis(1_000));
+        timer2.start(Duration::from_millis(500));
 
         // @+500
-        block!(timer1.wait());
-        pin.set_low();
+        block!(timer2.wait()).unwrap();
+        pin_mid.set_high();
 
         // @+500
-        block!(timer0.wait());
-        pin.set_high();
+        block!(timer1.wait()).unwrap();
+        pin_mid.set_low();
 
         // @+500
-        block!(timer1.wait());
-        pin.set_low();
-        CountDown::start(&mut timer2, Duration::from_millis(500));
+        block!(timer0.wait()).unwrap();
+        pin_lower_left.set_high();
 
         // @+500
-        block!(timer2.wait());
-        pin.set_high();
+        block!(timer1.wait()).unwrap();
+        pin_lower_left.set_low();
+        timer2.start(Duration::from_millis(500));
 
         // @+500
-        block!(timer0.wait());
-        pin.set_low();
+        block!(timer2.wait()).unwrap();
+        pin_upper_right.set_high();
+
+        // @+500
+        block!(timer0.wait()).unwrap();
+        pin_upper_right.set_low();
 
         // @4000
-        block!(rtc1.wait());
-        pin.set_high();
+        block!(rtc1.wait()).unwrap();
+        pin_mid.set_high();
 
         // @5000
-        block!(rtc0.wait());
-        pin.set_low();
+        block!(rtc0.wait()).unwrap();
+        pin_mid.set_low();
+
+
+        // Test reusing an RTC
+        rtc0.start(Duration::from_millis(1000));
+        block!(rtc0.wait()).unwrap();
+        pin_mid.set_high();
+
+        rtc0.start(Duration::from_millis(1000));
+        block!(rtc0.wait()).unwrap();
+        pin_mid.set_low();
 
     }
-    
+
     panic!("FIN");
 }
